@@ -70,6 +70,14 @@ def clear_screen():
     sys.stdout.flush()
 
 
+def set_terminal_title(title):
+    if not sys.stdout.isatty():
+        return
+
+    sys.stdout.write("\033]0;{0}\007".format(title))
+    sys.stdout.flush()
+
+
 def run_countdown(total_seconds):
     end_time = time.monotonic() + total_seconds
 
@@ -78,6 +86,7 @@ def run_countdown(total_seconds):
         if remaining < 0:
             remaining = 0
 
+        set_terminal_title("{0} remaining".format(format_hms(remaining)))
         render_countdown(total_seconds, remaining)
         if remaining == 0:
             break
@@ -194,10 +203,12 @@ def main(argv=None):
             first_run = False
 
         run_countdown(total_seconds)
+        set_terminal_title("TIME UP")
         if not args.quiet:
             send_macos_notification(duration_label)
         action = wait_for_alarm_command()
         if action == "quit":
+            set_terminal_title("countdown")
             return 0
 
 

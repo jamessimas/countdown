@@ -62,6 +62,28 @@ class RenderCountdownTests(unittest.TestCase):
         fake_stdout.flush.assert_called_once_with()
 
 
+class SetTerminalTitleTests(unittest.TestCase):
+    def test_set_terminal_title_writes_escape_sequence_for_tty(self):
+        fake_stdout = mock.Mock()
+        fake_stdout.isatty.return_value = True
+
+        with mock.patch.object(countdown.sys, "stdout", fake_stdout):
+            countdown.set_terminal_title("00:00:05 remaining")
+
+        fake_stdout.write.assert_called_once_with("\033]0;00:00:05 remaining\007")
+        fake_stdout.flush.assert_called_once_with()
+
+    def test_set_terminal_title_is_noop_for_non_tty(self):
+        fake_stdout = mock.Mock()
+        fake_stdout.isatty.return_value = False
+
+        with mock.patch.object(countdown.sys, "stdout", fake_stdout):
+            countdown.set_terminal_title("ignored")
+
+        fake_stdout.write.assert_not_called()
+        fake_stdout.flush.assert_not_called()
+
+
 class RunCountdownTests(unittest.TestCase):
     def test_run_countdown_renders_until_zero_and_finishes_line(self):
         fake_stdout = mock.Mock()
@@ -69,6 +91,7 @@ class RunCountdownTests(unittest.TestCase):
         with (
             mock.patch.object(countdown.sys, "stdout", fake_stdout),
             mock.patch.object(countdown, "render_countdown") as render_mock,
+            mock.patch.object(countdown, "set_terminal_title") as set_title_mock,
             mock.patch.object(countdown.time, "sleep") as sleep_mock,
             mock.patch.object(
                 countdown.time, "monotonic", side_effect=[100.0, 100.0, 101.2, 102.3]
@@ -79,6 +102,15 @@ class RunCountdownTests(unittest.TestCase):
         self.assertEqual(render_mock.call_args_list[0], mock.call(2, 2))
         self.assertEqual(render_mock.call_args_list[1], mock.call(2, 1))
         self.assertEqual(render_mock.call_args_list[2], mock.call(2, 0))
+        self.assertEqual(
+            set_title_mock.call_args_list[0], mock.call("00:00:02 remaining")
+        )
+        self.assertEqual(
+            set_title_mock.call_args_list[1], mock.call("00:00:01 remaining")
+        )
+        self.assertEqual(
+            set_title_mock.call_args_list[2], mock.call("00:00:00 remaining")
+        )
         self.assertEqual(sleep_mock.call_count, 2)
         fake_stdout.write.assert_called_once_with("\n")
         fake_stdout.flush.assert_called_once_with()
