@@ -1,0 +1,135 @@
+import argparse
+import unittest
+from unittest import mock
+
+import countdown
+
+
+class ParseDurationTests(unittest.TestCase):
+    def test_parse_duration_valid_values(self):
+        cases = {
+            "10m": 600,
+            "5s": 5,
+            "1h": 3600,
+            "30": 30,
+            " 7M ": 420,
+            "2H": 7200,
+        }
+
+        for value, expected in cases.items():
+            with self.subTest(value=value):
+                self.assertEqual(countdown.parse_duration(value), expected)
+
+    def test_parse_duration_invalid_values(self):
+        cases = ["", "abc", "10x", "-5", "0", "0m"]
+
+        for value in cases:
+            with self.subTest(value=value):
+                with self.assertRaises(argparse.ArgumentTypeError):
+                    countdown.parse_duration(value)
+
+
+class FormatHmsTests(unittest.TestCase):
+    def test_format_hms_outputs_expected(self):
+        self.assertEqual(countdown.format_hms(0), "00:00:00")
+        self.assertEqual(countdown.format_hms(5), "00:00:05")
+        self.assertEqual(countdown.format_hms(65), "00:01:05")
+        self.assertEqual(countdown.format_hms(3661), "01:01:01")
+
+
+class RenderCountdownTests(unittest.TestCase):
+    def test_render_countdown_writes_progress_line(self):
+        fake_stdout = mock.Mock()
+
+        with mock.patch.object(countdown.sys, "stdout", fake_stdout):
+            countdown.render_countdown(10, 5)
+
+        fake_stdout.write.assert_called_once_with(
+            "\r[===============---------------] 00:00:05 remaining"
+        )
+        fake_stdout.flush.assert_called_once_with()
+
+
+class RunCountdownTests(unittest.TestCase):
+    def test_run_countdown_renders_until_zero_and_finishes_line(self):
+        fake_stdout = mock.Mock()
+
+        with (
+            mock.patch.object(countdown.sys, "stdout", fake_stdout),
+            mock.patch.object(countdown, "render_countdown") as render_mock,
+            mock.patch.object(countdown.time, "sleep") as sleep_mock,
+            mock.patch.object(
+                countdown.time, "monotonic", side_effect=[100.0, 100.0, 101.2, 102.3]
+            ),
+        ):
+            countdown.run_countdown(2)
+
+        self.assertEqual(render_mock.call_args_list[0], mock.call(2, 2))
+        self.assertEqual(render_mock.call_args_list[1], mock.call(2, 1))
+        self.assertEqual(render_mock.call_args_list[2], mock.call(2, 0))
+        self.assertEqual(sleep_mock.call_count, 2)
+        fake_stdout.write.assert_called_once_with("\n")
+        fake_stdout.flush.assert_called_once_with()
+
+
+class WaitForAlarmCommandTests(unittest.TestCase):
+    def test_wait_for_alarm_command_non_tty_restarts(self):
+        fake_stdout = mock.Mock()
+        fake_stdin = mock.Mock()
+        fake_stdin.isatty.return_value = False
+
+        with (
+            mock.patch.object(countdown.sys, "stdout", fake_stdout),
+            mock.patch.object(countdown.sys, "stdin", fake_stdin),
+            mock.patch("builtins.input", side_effect=["x", "r"]),
+        ):
+            result = countdown.wait_for_alarm_command()
+
+        self.assertEqual(result, "restart")
+        self.assertEqual(fake_stdout.write.call_count, 2)
+        self.assertEqual(fake_stdout.flush.call_count, 2)
+
+    def test_wait_for_alarm_command_tty_closes_and_restores_terminal(self):
+        fake_stdout = mock.Mock()
+        fake_stdin = mock.Mock()
+        fake_stdin.isatty.return_value = True
+        fake_stdin.fileno.return_value = 99
+        fake_stdin.read.return_value = "c"
+
+        with (
+            mock.patch.object(countdown.sys, "stdout", fake_stdout),
+            mock.patch.object(countdown.sys, "stdin", fake_stdin),
+            mock.patch.object(
+                countdown.termios, "tcgetattr", return_value=["orig"]
+            ) as tcgetattr_mock,
+            mock.patch.object(countdown.tty, "setcbreak") as setcbreak_mock,
+            mock.patch.object(
+                countdown.select, "select", return_value=([fake_stdin], [], [])
+            ),
+            mock.patch.object(countdown.time, "monotonic", return_value=1.0),
+            mock.patch.object(countdown.termios, "tcsetattr") as tcsetattr_mock,
+        ):
+            result = countdown.wait_for_alarm_command()
+
+        self.assertEqual(result, "close")
+        tcgetattr_mock.assert_called_once_with(99)
+        setcbreak_mock.assert_called_once_with(99)
+        tcsetattr_mock.assert_called_once_with(
+            99, countdown.termios.TCSADRAIN, ["orig"]
+        )
+
+
+class BuildParserTests(unittest.TestCase):
+    def test_build_parser_parses_valid_length(self):
+        parser = countdown.build_parser()
+        args = parser.parse_args(["5m"])
+        self.assertEqual(args.length, 300)
+
+    def test_build_parser_rejects_invalid_length(self):
+        parser = countdown.build_parser()
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["bad"])
+
+
+if __name__ == "__main__":
+    unittest.main()
