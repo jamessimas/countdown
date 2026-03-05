@@ -139,12 +139,12 @@ class WaitForAlarmCommandTests(unittest.TestCase):
         self.assertEqual(fake_stdout.write.call_count, 2)
         self.assertEqual(fake_stdout.flush.call_count, 2)
 
-    def test_wait_for_alarm_command_tty_closes_and_restores_terminal(self):
+    def test_wait_for_alarm_command_tty_quits_and_restores_terminal(self):
         fake_stdout = mock.Mock()
         fake_stdin = mock.Mock()
         fake_stdin.isatty.return_value = True
         fake_stdin.fileno.return_value = 99
-        fake_stdin.read.return_value = "c"
+        fake_stdin.read.return_value = "q"
 
         with (
             mock.patch.object(countdown.sys, "stdout", fake_stdout),
@@ -161,7 +161,7 @@ class WaitForAlarmCommandTests(unittest.TestCase):
         ):
             result = countdown.wait_for_alarm_command()
 
-        self.assertEqual(result, "close")
+        self.assertEqual(result, "quit")
         tcgetattr_mock.assert_called_once_with(99)
         setcbreak_mock.assert_called_once_with(99)
         tcsetattr_mock.assert_called_once_with(
@@ -191,10 +191,9 @@ class BuildParserTests(unittest.TestCase):
 class MainTests(unittest.TestCase):
     def test_main_sends_notification_by_default(self):
         with (
+            mock.patch.object(countdown, "clear_screen"),
             mock.patch.object(countdown, "run_countdown"),
-            mock.patch.object(
-                countdown, "wait_for_alarm_command", return_value="close"
-            ),
+            mock.patch.object(countdown, "wait_for_alarm_command", return_value="quit"),
             mock.patch.object(countdown, "send_macos_notification") as notify_mock,
         ):
             result = countdown.main(["5s"])
@@ -204,16 +203,53 @@ class MainTests(unittest.TestCase):
 
     def test_main_suppresses_notification_when_quiet(self):
         with (
+            mock.patch.object(countdown, "clear_screen"),
             mock.patch.object(countdown, "run_countdown"),
-            mock.patch.object(
-                countdown, "wait_for_alarm_command", return_value="close"
-            ),
+            mock.patch.object(countdown, "wait_for_alarm_command", return_value="quit"),
             mock.patch.object(countdown, "send_macos_notification") as notify_mock,
         ):
             result = countdown.main(["-q", "5s"])
 
         self.assertEqual(result, 0)
         notify_mock.assert_not_called()
+
+    def test_main_clears_screen_only_on_first_run(self):
+        tracker = mock.Mock()
+
+        with (
+            mock.patch.object(
+                countdown, "clear_screen", side_effect=tracker.clear_screen
+            ),
+            mock.patch.object(
+                countdown, "run_countdown", side_effect=tracker.run_countdown
+            ),
+            mock.patch.object(
+                countdown,
+                "wait_for_alarm_command",
+                side_effect=["restart", "quit"],
+            ),
+            mock.patch.object(
+                countdown,
+                "send_macos_notification",
+                side_effect=tracker.send_macos_notification,
+            ),
+        ):
+            result = countdown.main(["5s"])
+
+        self.assertEqual(result, 0)
+        self.assertEqual(tracker.clear_screen.call_count, 1)
+        self.assertEqual(tracker.run_countdown.call_count, 2)
+        self.assertEqual(tracker.send_macos_notification.call_count, 2)
+        self.assertEqual(
+            tracker.mock_calls,
+            [
+                mock.call.clear_screen(),
+                mock.call.run_countdown(5),
+                mock.call.send_macos_notification("5s"),
+                mock.call.run_countdown(5),
+                mock.call.send_macos_notification("5s"),
+            ],
+        )
 
 
 if __name__ == "__main__":

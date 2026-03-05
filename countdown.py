@@ -65,6 +65,11 @@ def render_countdown(total_seconds, remaining_seconds):
     sys.stdout.flush()
 
 
+def clear_screen():
+    sys.stdout.write("\033[2J\033[H")
+    sys.stdout.flush()
+
+
 def run_countdown(total_seconds):
     end_time = time.monotonic() + total_seconds
 
@@ -181,8 +186,13 @@ def main(argv=None):
 
     total_seconds = args.length
     duration_label = normalize_duration_label(raw_value)
+    first_run = True
 
     while True:
+        if first_run:
+            clear_screen()
+            first_run = False
+
         run_countdown(total_seconds)
         if not args.quiet:
             send_macos_notification(duration_label)
