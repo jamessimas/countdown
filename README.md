@@ -17,18 +17,17 @@ Run:
 python3 countdown.py [-q|--quiet] LENGTH
 ```
 
-`LENGTH` examples:
+Examples:
 
-- `10m` (10 minutes)
-- `5s` (5 seconds)
-- `1h` (1 hour)
-- `30` (30 seconds; default unit is seconds)
-
-`-q` / `--quiet` disables the macOS notification.
+```bash
+python3 countdown.py 10s     # 10 seconds
+python3 countdown.py 5m      #  5 minutes
+python3 countdown.py 2h      #  2 hours
+```
 
 ## Unit Tests
 
-Run all tests with:
+Run all tests:
 
 ```bash
 python3 -m unittest -v
