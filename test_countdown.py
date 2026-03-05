@@ -37,6 +37,18 @@ class FormatHmsTests(unittest.TestCase):
         self.assertEqual(countdown.format_hms(3661), "01:01:01")
 
 
+class NormalizeDurationLabelTests(unittest.TestCase):
+    def test_normalize_duration_label_with_and_without_units(self):
+        self.assertEqual(countdown.normalize_duration_label("5s"), "5s")
+        self.assertEqual(countdown.normalize_duration_label("1H"), "1h")
+        self.assertEqual(countdown.normalize_duration_label(" 10m "), "10m")
+        self.assertEqual(countdown.normalize_duration_label("30"), "30s")
+
+    def test_normalize_duration_label_rejects_invalid_values(self):
+        with self.assertRaises(ValueError):
+            countdown.normalize_duration_label("bad")
+
+
 class RenderCountdownTests(unittest.TestCase):
     def test_render_countdown_writes_progress_line(self):
         fake_stdout = mock.Mock()
@@ -70,6 +82,44 @@ class RunCountdownTests(unittest.TestCase):
         self.assertEqual(sleep_mock.call_count, 2)
         fake_stdout.write.assert_called_once_with("\n")
         fake_stdout.flush.assert_called_once_with()
+
+
+class SendMacosNotificationTests(unittest.TestCase):
+    def test_send_macos_notification_runs_osascript_on_macos(self):
+        with (
+            mock.patch.object(countdown.sys, "platform", "darwin"),
+            mock.patch.object(countdown.subprocess, "run") as run_mock,
+        ):
+            countdown.send_macos_notification("5s")
+
+        run_mock.assert_called_once_with(
+            [
+                "osascript",
+                "-e",
+                'display notification "5s timer done." with title "Countdown"',
+            ],
+            check=False,
+            stdout=countdown.subprocess.DEVNULL,
+            stderr=countdown.subprocess.DEVNULL,
+        )
+
+    def test_send_macos_notification_is_noop_on_non_macos(self):
+        with (
+            mock.patch.object(countdown.sys, "platform", "linux"),
+            mock.patch.object(countdown.subprocess, "run") as run_mock,
+        ):
+            countdown.send_macos_notification("5s")
+
+        run_mock.assert_not_called()
+
+    def test_send_macos_notification_handles_osascript_failure(self):
+        with (
+            mock.patch.object(countdown.sys, "platform", "darwin"),
+            mock.patch.object(
+                countdown.subprocess, "run", side_effect=OSError("missing")
+            ),
+        ):
+            countdown.send_macos_notification("5s")
 
 
 class WaitForAlarmCommandTests(unittest.TestCase):
@@ -124,11 +174,46 @@ class BuildParserTests(unittest.TestCase):
         parser = countdown.build_parser()
         args = parser.parse_args(["5m"])
         self.assertEqual(args.length, 300)
+        self.assertFalse(args.quiet)
+
+    def test_build_parser_parses_quiet_flag(self):
+        parser = countdown.build_parser()
+        args = parser.parse_args(["-q", "5m"])
+        self.assertTrue(args.quiet)
+        self.assertEqual(args.length, 300)
 
     def test_build_parser_rejects_invalid_length(self):
         parser = countdown.build_parser()
         with self.assertRaises(SystemExit):
             parser.parse_args(["bad"])
+
+
+class MainTests(unittest.TestCase):
+    def test_main_sends_notification_by_default(self):
+        with (
+            mock.patch.object(countdown, "run_countdown"),
+            mock.patch.object(
+                countdown, "wait_for_alarm_command", return_value="close"
+            ),
+            mock.patch.object(countdown, "send_macos_notification") as notify_mock,
+        ):
+            result = countdown.main(["5s"])
+
+        self.assertEqual(result, 0)
+        notify_mock.assert_called_once_with("5s")
+
+    def test_main_suppresses_notification_when_quiet(self):
+        with (
+            mock.patch.object(countdown, "run_countdown"),
+            mock.patch.object(
+                countdown, "wait_for_alarm_command", return_value="close"
+            ),
+            mock.patch.object(countdown, "send_macos_notification") as notify_mock,
+        ):
+            result = countdown.main(["-q", "5s"])
+
+        self.assertEqual(result, 0)
+        notify_mock.assert_not_called()
 
 
 if __name__ == "__main__":

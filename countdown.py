@@ -3,6 +3,7 @@
 import argparse
 import re
 import select
+import subprocess
 import sys
 import termios
 import time
@@ -31,6 +32,19 @@ def parse_duration(value):
         raise argparse.ArgumentTypeError("timer length must be greater than zero")
 
     return amount * UNIT_MULTIPLIERS[unit]
+
+
+def normalize_duration_label(value):
+    match = re.fullmatch(r"\s*(\d+)\s*([hmsHMS]?)\s*", value)
+    if not match:
+        raise ValueError("invalid timer length label")
+
+    amount = int(match.group(1))
+    unit = match.group(2).lower()
+    if unit == "":
+        unit = "s"
+
+    return "{0}{1}".format(amount, unit)
 
 
 def format_hms(total_seconds):
@@ -69,20 +83,38 @@ def run_countdown(total_seconds):
     sys.stdout.flush()
 
 
+def send_macos_notification(duration_label):
+    if sys.platform != "darwin":
+        return
+
+    message = "{0} timer done.".format(duration_label)
+    script = 'display notification "{0}" with title "Countdown"'.format(message)
+
+    try:
+        subprocess.run(
+            ["osascript", "-e", script],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        pass
+
+
 def wait_for_alarm_command():
-    prompt = "Time is up! Press [r] to restart or [c] to close."
+    prompt = "Time is up! Press [r] to restart or [q] to quit."
 
     if not sys.stdin.isatty():
         while True:
             sys.stdout.write("\a")
             sys.stdout.flush()
             choice = (
-                input("Time is up! Type 'r' to restart or 'c' to close: ")
+                input("Time is up! Type 'r' to restart or 'q' to quit: ")
                 .strip()
                 .lower()
             )
-            if choice == "c":
-                return "close"
+            if choice == "q":
+                return "quit"
             if choice == "r":
                 return "restart"
 
@@ -106,10 +138,10 @@ def wait_for_alarm_command():
             readable, _, _ = select.select([sys.stdin], [], [], 0.1)
             if readable:
                 char = sys.stdin.read(1).lower()
-                if char == "c":
+                if char == "q":
                     sys.stdout.write("\n")
                     sys.stdout.flush()
-                    return "close"
+                    return "quit"
                 if char == "r":
                     sys.stdout.write("\n")
                     sys.stdout.flush()
@@ -121,6 +153,12 @@ def wait_for_alarm_command():
 def build_parser():
     parser = argparse.ArgumentParser(description="Simple countdown timer")
     parser.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="silence macOS notification when timer ends",
+    )
+    parser.add_argument(
         "length",
         type=parse_duration,
         help="timer length (examples: 10m, 5s, 1h, 30)",
@@ -128,16 +166,28 @@ def build_parser():
     return parser
 
 
-def main():
+def main(argv=None):
     parser = build_parser()
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+
+    if argv is None:
+        raw_args = sys.argv[1:]
+    else:
+        raw_args = argv
+
+    raw_value = next((token for token in raw_args if not token.startswith("-")), None)
+    if raw_value is None:
+        raw_value = "{0}s".format(args.length)
 
     total_seconds = args.length
+    duration_label = normalize_duration_label(raw_value)
 
     while True:
         run_countdown(total_seconds)
+        if not args.quiet:
+            send_macos_notification(duration_label)
         action = wait_for_alarm_command()
-        if action == "close":
+        if action == "quit":
             return 0
 
 
