@@ -13,7 +13,7 @@ On macOS, it can send a system notification when the timer finishes.
 
 Run:
 
-```bash
+```
 python3 countdown.py [-q|--quiet] LENGTH
 ```
 
