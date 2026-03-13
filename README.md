@@ -14,15 +14,16 @@ On macOS, it can send a system notification when the timer finishes.
 Run:
 
 ```
-python3 countdown.py [-q|--quiet] LENGTH
+python3 countdown.py [-q|--quiet] [-m MESSAGE|--message MESSAGE] LENGTH
 ```
 
 Examples:
 
 ```bash
-python3 countdown.py 10s     # 10 seconds
-python3 countdown.py 5m      #  5 minutes
-python3 countdown.py 2h      #  2 hours
+python3 countdown.py 10s                    # 10 seconds
+python3 countdown.py 5m                     #  5 minutes
+python3 countdown.py 2h                     #  2 hours
+python3 countdown.py -m "Coffee ready" 5m   #  5 minutes with custom message
 ```
 
 ## Unit Tests

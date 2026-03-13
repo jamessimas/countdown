@@ -97,12 +97,13 @@ def run_countdown(total_seconds):
     sys.stdout.flush()
 
 
-def send_macos_notification(duration_label):
+def send_macos_notification(duration_label, message=None):
     if sys.platform != "darwin":
         return
 
-    message = "{0} timer done.".format(duration_label)
-    script = 'display notification "{0}" with title "Countdown"'.format(message)
+    title = message if message else "Countdown"
+    body = "{0} timer done.".format(duration_label)
+    script = 'display notification "{0}" with title "{1}"'.format(body, title)
 
     try:
         subprocess.run(
@@ -115,18 +116,24 @@ def send_macos_notification(duration_label):
         pass
 
 
-def wait_for_alarm_command():
-    prompt = "Time is up! Press [r] to restart or [q] to quit."
+def wait_for_alarm_command(message=None):
+    if message:
+        header = "{0}\n\n".format(message)
+        tty_action = "Press [r] to restart or [q] to quit."
+        input_action = "Type 'r' to restart or 'q' to quit: "
+    else:
+        header = None
+        tty_action = "Time is up! Press [r] to restart or [q] to quit."
+        input_action = "Time is up! Type 'r' to restart or 'q' to quit: "
 
     if not sys.stdin.isatty():
+        if header:
+            sys.stdout.write(header)
+            sys.stdout.flush()
         while True:
             sys.stdout.write("\a")
             sys.stdout.flush()
-            choice = (
-                input("Time is up! Type 'r' to restart or 'q' to quit: ")
-                .strip()
-                .lower()
-            )
+            choice = input(input_action).strip().lower()
             if choice == "q":
                 return "quit"
             if choice == "r":
@@ -139,6 +146,10 @@ def wait_for_alarm_command():
     try:
         tty.setcbreak(fd)
 
+        if header:
+            sys.stdout.write(header)
+            sys.stdout.flush()
+
         while True:
             now = time.monotonic()
             if now >= next_bell:
@@ -146,7 +157,7 @@ def wait_for_alarm_command():
                 sys.stdout.flush()
                 next_bell = now + 0.8
 
-            sys.stdout.write("\r" + prompt + " ")
+            sys.stdout.write("\r" + tty_action + " ")
             sys.stdout.flush()
 
             readable, _, _ = select.select([sys.stdin], [], [], 0.1)
@@ -173,6 +184,12 @@ def build_parser():
         help="silence macOS notification when timer ends",
     )
     parser.add_argument(
+        "-m",
+        "--message",
+        default=None,
+        help="custom message to display when the timer finishes",
+    )
+    parser.add_argument(
         "length",
         type=parse_duration,
         help="timer length (examples: 10m, 5s, 1h, 30)",
@@ -189,7 +206,19 @@ def main(argv=None):
     else:
         raw_args = argv
 
-    raw_value = next((token for token in raw_args if not token.startswith("-")), None)
+    raw_value = None
+    skip_next = False
+    for token in raw_args:
+        if skip_next:
+            skip_next = False
+            continue
+        if token in ("-m", "--message"):
+            skip_next = True
+            continue
+        if token.startswith("-"):
+            continue
+        raw_value = token
+        break
     if raw_value is None:
         raw_value = "{0}s".format(args.length)
 
@@ -203,10 +232,10 @@ def main(argv=None):
             first_run = False
 
         run_countdown(total_seconds)
-        set_terminal_title("TIME UP")
+        set_terminal_title(args.message if args.message else "TIME UP")
         if not args.quiet:
-            send_macos_notification(duration_label)
-        action = wait_for_alarm_command()
+            send_macos_notification(duration_label, message=args.message)
+        action = wait_for_alarm_command(message=args.message)
         if action == "quit":
             set_terminal_title("countdown")
             return 0

@@ -144,6 +144,24 @@ class SendMacosNotificationTests(unittest.TestCase):
 
         run_mock.assert_not_called()
 
+    def test_send_macos_notification_uses_custom_title_when_message_provided(self):
+        with (
+            mock.patch.object(countdown.sys, "platform", "darwin"),
+            mock.patch.object(countdown.subprocess, "run") as run_mock,
+        ):
+            countdown.send_macos_notification("5s", message="Coffee ready")
+
+        run_mock.assert_called_once_with(
+            [
+                "osascript",
+                "-e",
+                'display notification "5s timer done." with title "Coffee ready"',
+            ],
+            check=False,
+            stdout=countdown.subprocess.DEVNULL,
+            stderr=countdown.subprocess.DEVNULL,
+        )
+
     def test_send_macos_notification_handles_osascript_failure(self):
         with (
             mock.patch.object(countdown.sys, "platform", "darwin"),
@@ -200,6 +218,49 @@ class WaitForAlarmCommandTests(unittest.TestCase):
             99, countdown.termios.TCSADRAIN, ["orig"]
         )
 
+    def test_wait_for_alarm_command_non_tty_shows_custom_message(self):
+        fake_stdout = mock.Mock()
+        fake_stdin = mock.Mock()
+        fake_stdin.isatty.return_value = False
+
+        with (
+            mock.patch.object(countdown.sys, "stdout", fake_stdout),
+            mock.patch.object(countdown.sys, "stdin", fake_stdin),
+            mock.patch("builtins.input", side_effect=["q"]) as input_mock,
+        ):
+            result = countdown.wait_for_alarm_command(message="Coffee ready")
+
+        self.assertEqual(result, "quit")
+        fake_stdout.write.assert_any_call("Coffee ready\n\n")
+        input_mock.assert_called_once_with("Type 'r' to restart or 'q' to quit: ")
+
+    def test_wait_for_alarm_command_tty_shows_custom_message(self):
+        fake_stdout = mock.Mock()
+        fake_stdin = mock.Mock()
+        fake_stdin.isatty.return_value = True
+        fake_stdin.fileno.return_value = 99
+        fake_stdin.read.return_value = "r"
+
+        with (
+            mock.patch.object(countdown.sys, "stdout", fake_stdout),
+            mock.patch.object(countdown.sys, "stdin", fake_stdin),
+            mock.patch.object(countdown.termios, "tcgetattr", return_value=["orig"]),
+            mock.patch.object(countdown.tty, "setcbreak"),
+            mock.patch.object(
+                countdown.select, "select", return_value=([fake_stdin], [], [])
+            ),
+            mock.patch.object(countdown.time, "monotonic", return_value=1.0),
+            mock.patch.object(countdown.termios, "tcsetattr"),
+        ):
+            result = countdown.wait_for_alarm_command(message="Coffee ready")
+
+        self.assertEqual(result, "restart")
+        # Header is written once, before the loop
+        write_calls = [args[0][0] for args in fake_stdout.write.call_args_list]
+        self.assertEqual(write_calls.count("Coffee ready\n\n"), 1)
+        # Action prompt is written via \r (no newlines) inside the loop
+        fake_stdout.write.assert_any_call("\rPress [r] to restart or [q] to quit. ")
+
 
 class BuildParserTests(unittest.TestCase):
     def test_build_parser_parses_valid_length(self):
@@ -213,6 +274,22 @@ class BuildParserTests(unittest.TestCase):
         args = parser.parse_args(["-q", "5m"])
         self.assertTrue(args.quiet)
         self.assertEqual(args.length, 300)
+
+    def test_build_parser_parses_message_option(self):
+        parser = countdown.build_parser()
+        args = parser.parse_args(["-m", "Coffee ready", "5m"])
+        self.assertEqual(args.message, "Coffee ready")
+        self.assertEqual(args.length, 300)
+
+    def test_build_parser_long_message_option(self):
+        parser = countdown.build_parser()
+        args = parser.parse_args(["--message", "Tea time", "1h"])
+        self.assertEqual(args.message, "Tea time")
+
+    def test_build_parser_message_defaults_to_none(self):
+        parser = countdown.build_parser()
+        args = parser.parse_args(["5m"])
+        self.assertIsNone(args.message)
 
     def test_build_parser_rejects_invalid_length(self):
         parser = countdown.build_parser()
@@ -231,7 +308,7 @@ class MainTests(unittest.TestCase):
             result = countdown.main(["5s"])
 
         self.assertEqual(result, 0)
-        notify_mock.assert_called_once_with("5s")
+        notify_mock.assert_called_once_with("5s", message=None)
 
     def test_main_suppresses_notification_when_quiet(self):
         with (
@@ -277,11 +354,45 @@ class MainTests(unittest.TestCase):
             [
                 mock.call.clear_screen(),
                 mock.call.run_countdown(5),
-                mock.call.send_macos_notification("5s"),
+                mock.call.send_macos_notification("5s", message=None),
                 mock.call.run_countdown(5),
-                mock.call.send_macos_notification("5s"),
+                mock.call.send_macos_notification("5s", message=None),
             ],
         )
+
+    def test_main_passes_message_to_title_notification_and_alarm(self):
+        with (
+            mock.patch.object(countdown, "clear_screen"),
+            mock.patch.object(countdown, "run_countdown"),
+            mock.patch.object(countdown, "set_terminal_title") as title_mock,
+            mock.patch.object(
+                countdown, "wait_for_alarm_command", return_value="quit"
+            ) as alarm_mock,
+            mock.patch.object(countdown, "send_macos_notification") as notify_mock,
+        ):
+            result = countdown.main(["-m", "Coffee ready", "5s"])
+
+        self.assertEqual(result, 0)
+        title_mock.assert_any_call("Coffee ready")
+        notify_mock.assert_called_once_with("5s", message="Coffee ready")
+        alarm_mock.assert_called_once_with(message="Coffee ready")
+
+    def test_main_uses_defaults_when_no_message(self):
+        with (
+            mock.patch.object(countdown, "clear_screen"),
+            mock.patch.object(countdown, "run_countdown"),
+            mock.patch.object(countdown, "set_terminal_title") as title_mock,
+            mock.patch.object(
+                countdown, "wait_for_alarm_command", return_value="quit"
+            ) as alarm_mock,
+            mock.patch.object(countdown, "send_macos_notification") as notify_mock,
+        ):
+            result = countdown.main(["5s"])
+
+        self.assertEqual(result, 0)
+        title_mock.assert_any_call("TIME UP")
+        notify_mock.assert_called_once_with("5s", message=None)
+        alarm_mock.assert_called_once_with(message=None)
 
 
 if __name__ == "__main__":
